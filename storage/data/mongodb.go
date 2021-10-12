@@ -124,7 +124,18 @@ func (db *MongoDB) Init() error {
 			"feedbackkey.userid": 1,
 		},
 	})
-	return errors.Trace(err)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	_, err = d.Collection("feedback").Indexes().CreateOne(ctx, mongo.IndexModel{
+		Keys: bson.M{
+			"feedbackkey.itemid": 1,
+		},
+	})
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
 }
 
 // Close connection to MongoDB.
@@ -294,6 +305,7 @@ func (db *MongoDB) GetItemFeedback(itemId string, feedbackTypes ...string) ([]Fe
 	var err error
 	filter := bson.M{
 		"feedbackkey.itemid": bson.M{"$eq": itemId},
+		"timestamp":          bson.M{"$lte": time.Now()},
 	}
 	if len(feedbackTypes) > 0 {
 		filter["feedbackkey.feedbacktype"] = bson.M{"$in": feedbackTypes}
@@ -425,7 +437,7 @@ func (db *MongoDB) GetUserStream(batchSize int) (chan []User, chan error) {
 }
 
 // GetUserFeedback returns feedback of a user from MongoDB.
-func (db *MongoDB) GetUserFeedback(userId string, feedbackTypes ...string) ([]Feedback, error) {
+func (db *MongoDB) GetUserFeedback(userId string, withFuture bool, feedbackTypes ...string) ([]Feedback, error) {
 	startTime := time.Now()
 	ctx := context.Background()
 	c := db.client.Database(db.dbName).Collection("feedback")
@@ -433,6 +445,9 @@ func (db *MongoDB) GetUserFeedback(userId string, feedbackTypes ...string) ([]Fe
 	var err error
 	filter := bson.M{
 		"feedbackkey.userid": bson.M{"$eq": userId},
+	}
+	if !withFuture {
+		filter["timestamp"] = bson.M{"$lte": time.Now()}
 	}
 	if len(feedbackTypes) > 0 {
 		filter["feedbackkey.feedbacktype"] = bson.M{"$in": feedbackTypes}
@@ -455,7 +470,7 @@ func (db *MongoDB) GetUserFeedback(userId string, feedbackTypes ...string) ([]Fe
 }
 
 // BatchInsertFeedback returns multiple feedback into MongoDB.
-func (db *MongoDB) BatchInsertFeedback(feedback []Feedback, insertUser, insertItem bool) error {
+func (db *MongoDB) BatchInsertFeedback(feedback []Feedback, insertUser, insertItem, overwrite bool) error {
 	ctx := context.Background()
 	// collect users and items
 	users := strset.New()
@@ -522,11 +537,17 @@ func (db *MongoDB) BatchInsertFeedback(feedback []Feedback, insertUser, insertIt
 	c := db.client.Database(db.dbName).Collection("feedback")
 	var models []mongo.WriteModel
 	for _, f := range feedback {
-		models = append(models, mongo.NewUpdateOneModel().
+		model := mongo.NewUpdateOneModel().
 			SetUpsert(true).
 			SetFilter(bson.M{
 				"feedbackkey": f.FeedbackKey,
-			}).SetUpdate(bson.M{"$set": f}))
+			})
+		if overwrite {
+			model.SetUpdate(bson.M{"$set": f})
+		} else {
+			model.SetUpdate(bson.M{"$setOnInsert": f})
+		}
+		models = append(models, model)
 	}
 	_, err := c.BulkWrite(ctx, models)
 	return errors.Trace(err)
@@ -540,6 +561,7 @@ func (db *MongoDB) GetFeedback(cursor string, n int, timeLimit *time.Time, feedb
 	opt.SetLimit(int64(n))
 	opt.SetSort(bson.D{{"feedbackkey", 1}})
 	filter := make(bson.M)
+	filter["timestamp"] = bson.M{"$lte": time.Now()}
 	// pass cursor to filter
 	if cursor != "" {
 		feedbackKey, err := feedbackKeyFromString(cursor)
@@ -592,6 +614,7 @@ func (db *MongoDB) GetFeedbackStream(batchSize int, timeLimit *time.Time, feedba
 		c := db.client.Database(db.dbName).Collection("feedback")
 		opt := options.Find()
 		filter := make(bson.M)
+		filter["timestamp"] = bson.M{"$lte": time.Now()}
 		// pass feedback type to filter
 		if len(feedbackTypes) > 0 {
 			filter["feedbackkey.feedbacktype"] = bson.M{"$in": feedbackTypes}
@@ -691,7 +714,7 @@ func (db *MongoDB) CountActiveUsers(date time.Time) (int, error) {
 }
 
 // GetClickThroughRate computes the click-through-rate of a specified date.
-func (db *MongoDB) GetClickThroughRate(date time.Time, positiveTypes []string, readType string) (float64, error) {
+func (db *MongoDB) GetClickThroughRate(date time.Time, positiveTypes, readTypes []string) (float64, error) {
 	ctx := context.Background()
 	c := db.client.Database(db.dbName).Collection("feedback")
 	readCountAgg, err := c.Aggregate(ctx, mongo.Pipeline{
@@ -702,7 +725,7 @@ func (db *MongoDB) GetClickThroughRate(date time.Time, positiveTypes []string, r
 				"$lt":  time.Date(date.Year(), date.Month(), date.Day()+1, 0, 0, 0, 0, time.UTC),
 			},
 			"feedbackkey.feedbacktype": bson.M{
-				"$eq": readType,
+				"$in": readTypes,
 			},
 		}}},
 		{{"$project", bson.M{

@@ -88,7 +88,8 @@ func (d *SQLDatabase) Init() error {
 			"time_stamp timestamp NOT NULL," +
 			"comment TEXT NOT NULL," +
 			"PRIMARY KEY(feedback_type, user_id, item_id)," +
-			"INDEX (user_id)" +
+			"INDEX (user_id)," +
+			"INDEX (item_id)" +
 			")  ENGINE=InnoDB"); err != nil {
 			return errors.Trace(err)
 		}
@@ -139,6 +140,9 @@ func (d *SQLDatabase) Init() error {
 		if _, err := d.client.Exec("CREATE INDEX IF NOT EXISTS user_id_index ON feedback(user_id)"); err != nil {
 			return errors.Trace(err)
 		}
+		if _, err := d.client.Exec("CREATE INDEX IF NOT EXISTS item_id_index ON feedback(item_id)"); err != nil {
+			return errors.Trace(err)
+		}
 		if _, err := d.client.Exec("CREATE TABLE IF NOT EXISTS measurements (" +
 			"name varchar(256) NOT NULL," +
 			"time_stamp timestamptz NOT NULL," +
@@ -173,8 +177,9 @@ func (d *SQLDatabase) Init() error {
 			"user_id String," +
 			"item_id String," +
 			"time_stamp Datetime," +
-			"comment String" +
-			") ENGINE = ReplacingMergeTree() ORDER BY (feedback_type, user_id, item_id)"); err != nil {
+			"comment String," +
+			"version DateTime" +
+			") ENGINE = ReplacingMergeTree(version) ORDER BY (feedback_type, user_id, item_id)"); err != nil {
 			return errors.Trace(err)
 		}
 		if _, err := d.client.Exec("CREATE TABLE IF NOT EXISTS measurements (" +
@@ -455,9 +460,9 @@ func (d *SQLDatabase) GetItemFeedback(itemId string, feedbackTypes ...string) ([
 	var builder strings.Builder
 	switch d.driver {
 	case MySQL, ClickHouse:
-		builder.WriteString("SELECT user_id, item_id, feedback_type FROM feedback WHERE item_id = ?")
+		builder.WriteString("SELECT user_id, item_id, feedback_type, time_stamp FROM feedback WHERE time_stamp <= NOW() AND item_id = ?")
 	case Postgres:
-		builder.WriteString("SELECT user_id, item_id, feedback_type FROM feedback WHERE item_id = $1")
+		builder.WriteString("SELECT user_id, item_id, feedback_type, time_stamp FROM feedback WHERE time_stamp <= NOW() AND item_id = $1")
 	}
 	args := []interface{}{itemId}
 	if len(feedbackTypes) > 0 {
@@ -484,7 +489,7 @@ func (d *SQLDatabase) GetItemFeedback(itemId string, feedbackTypes ...string) ([
 	defer result.Close()
 	for result.Next() {
 		var feedback Feedback
-		if err = result.Scan(&feedback.UserId, &feedback.ItemId, &feedback.FeedbackType); err != nil {
+		if err = result.Scan(&feedback.UserId, &feedback.ItemId, &feedback.FeedbackType, &feedback.Timestamp); err != nil {
 			return nil, errors.Trace(err)
 		}
 		feedbacks = append(feedbacks, feedback)
@@ -707,7 +712,7 @@ func (d *SQLDatabase) GetUserStream(batchSize int) (chan []User, chan error) {
 }
 
 // GetUserFeedback returns feedback of a user from MySQL.
-func (d *SQLDatabase) GetUserFeedback(userId string, feedbackTypes ...string) ([]Feedback, error) {
+func (d *SQLDatabase) GetUserFeedback(userId string, withFuture bool, feedbackTypes ...string) ([]Feedback, error) {
 	startTime := time.Now()
 	var result *sql.Rows
 	var err error
@@ -717,6 +722,9 @@ func (d *SQLDatabase) GetUserFeedback(userId string, feedbackTypes ...string) ([
 		builder.WriteString("SELECT feedback_type, user_id, item_id, time_stamp, `comment` FROM feedback WHERE user_id = ?")
 	case Postgres:
 		builder.WriteString("SELECT feedback_type, user_id, item_id, time_stamp, comment FROM feedback WHERE user_id = $1")
+	}
+	if !withFuture {
+		builder.WriteString(" AND time_stamp <= NOW() ")
 	}
 	args := []interface{}{userId}
 	if len(feedbackTypes) > 0 {
@@ -755,7 +763,7 @@ func (d *SQLDatabase) GetUserFeedback(userId string, feedbackTypes ...string) ([
 // BatchInsertFeedback insert a batch feedback into MySQL.
 // If insertUser set, new users will be insert to user table.
 // If insertItem set, new items will be insert to item table.
-func (d *SQLDatabase) BatchInsertFeedback(feedback []Feedback, insertUser, insertItem bool) error {
+func (d *SQLDatabase) BatchInsertFeedback(feedback []Feedback, insertUser, insertItem, overwrite bool) error {
 	// collect users and items
 	users := strset.New()
 	items := strset.New()
@@ -872,8 +880,14 @@ func (d *SQLDatabase) BatchInsertFeedback(feedback []Feedback, insertUser, inser
 	// insert feedback
 	builder := strings.Builder{}
 	switch d.driver {
-	case MySQL, ClickHouse:
-		builder.WriteString("INSERT INTO feedback(feedback_type, user_id, item_id, time_stamp, `comment`) VALUES ")
+	case MySQL:
+		if overwrite {
+			builder.WriteString("INSERT INTO feedback(feedback_type, user_id, item_id, time_stamp, `comment`) VALUES ")
+		} else {
+			builder.WriteString("INSERT IGNORE INTO feedback(feedback_type, user_id, item_id, time_stamp, `comment`) VALUES ")
+		}
+	case ClickHouse:
+		builder.WriteString("INSERT INTO feedback(feedback_type, user_id, item_id, time_stamp, `comment`, version) VALUES ")
 	case Postgres:
 		builder.WriteString("INSERT INTO feedback(feedback_type, user_id, item_id, time_stamp, comment) VALUES ")
 	}
@@ -881,8 +895,14 @@ func (d *SQLDatabase) BatchInsertFeedback(feedback []Feedback, insertUser, inser
 	for i, f := range feedback {
 		if users.Has(f.UserId) && items.Has(f.ItemId) {
 			switch d.driver {
-			case MySQL, ClickHouse:
+			case MySQL:
 				builder.WriteString("(?,?,?,?,?)")
+			case ClickHouse:
+				if overwrite {
+					builder.WriteString("(?,?,?,?,?,NOW())")
+				} else {
+					builder.WriteString("(?,?,?,?,?,0)")
+				}
 			case Postgres:
 				builder.WriteString(fmt.Sprintf("($%d,$%d,$%d,$%d,$%d)",
 					len(args)+1, len(args)+2, len(args)+3, len(args)+4, len(args)+5))
@@ -893,11 +913,15 @@ func (d *SQLDatabase) BatchInsertFeedback(feedback []Feedback, insertUser, inser
 			args = append(args, f.FeedbackType, f.UserId, f.ItemId, f.Timestamp, f.Comment)
 		}
 	}
-	switch d.driver {
-	case MySQL:
-		builder.WriteString(" ON DUPLICATE KEY UPDATE time_stamp = VALUES(time_stamp), `comment` = VALUES(`comment`)")
-	case Postgres:
-		builder.WriteString(" ON CONFLICT (feedback_type, user_id, item_id) DO UPDATE SET time_stamp = EXCLUDED.time_stamp, comment = EXCLUDED.comment")
+	if overwrite {
+		switch d.driver {
+		case MySQL:
+			builder.WriteString(" ON DUPLICATE KEY UPDATE time_stamp = VALUES(time_stamp), `comment` = VALUES(`comment`)")
+		case Postgres:
+			builder.WriteString(" ON CONFLICT (feedback_type, user_id, item_id) DO UPDATE SET time_stamp = EXCLUDED.time_stamp, comment = EXCLUDED.comment")
+		}
+	} else if d.driver == Postgres {
+		builder.WriteString(" ON CONFLICT (feedback_type, user_id, item_id) DO NOTHING")
 	}
 	_, err := d.client.Exec(builder.String(), args...)
 	if err != nil {
@@ -919,9 +943,9 @@ func (d *SQLDatabase) GetFeedback(cursor string, n int, timeLimit *time.Time, fe
 	var builder strings.Builder
 	switch d.driver {
 	case MySQL, ClickHouse:
-		builder.WriteString("SELECT feedback_type, user_id, item_id, time_stamp, `comment` FROM feedback WHERE (feedback_type, user_id, item_id) >= (?,?,?)")
+		builder.WriteString("SELECT feedback_type, user_id, item_id, time_stamp, `comment` FROM feedback WHERE time_stamp <= NOW() AND (feedback_type, user_id, item_id) >= (?,?,?)")
 	case Postgres:
-		builder.WriteString("SELECT feedback_type, user_id, item_id, time_stamp, comment FROM feedback WHERE (feedback_type, user_id, item_id) >= ($1,$2,$3)")
+		builder.WriteString("SELECT feedback_type, user_id, item_id, time_stamp, comment FROM feedback WHERE time_stamp <= NOW() AND (feedback_type, user_id, item_id) >= ($1,$2,$3)")
 	}
 	args := []interface{}{cursorKey.FeedbackType, cursorKey.UserId, cursorKey.ItemId}
 	if len(feedbackTypes) > 0 {
@@ -993,9 +1017,9 @@ func (d *SQLDatabase) GetFeedbackStream(batchSize int, timeLimit *time.Time, fee
 		var builder strings.Builder
 		switch d.driver {
 		case MySQL, ClickHouse:
-			builder.WriteString("SELECT feedback_type, user_id, item_id, time_stamp, `comment` FROM feedback WHERE 1")
+			builder.WriteString("SELECT feedback_type, user_id, item_id, time_stamp, `comment` FROM feedback WHERE time_stamp <= NOW()")
 		case Postgres:
-			builder.WriteString("SELECT feedback_type, user_id, item_id, time_stamp, comment FROM feedback WHERE TRUE")
+			builder.WriteString("SELECT feedback_type, user_id, item_id, time_stamp, comment FROM feedback WHERE time_stamp <= NOW()")
 		}
 		var args []interface{}
 		if len(feedbackTypes) > 0 {
@@ -1139,7 +1163,7 @@ func (d *SQLDatabase) DeleteUserItemFeedback(userId, itemId string, feedbackType
 }
 
 // GetClickThroughRate computes the click-through-rate of a specified date.
-func (d *SQLDatabase) GetClickThroughRate(date time.Time, positiveTypes []string, readType string) (float64, error) {
+func (d *SQLDatabase) GetClickThroughRate(date time.Time, positiveTypes, readTypes []string) (float64, error) {
 	builder := strings.Builder{}
 	// Get the average of click-through rates
 	switch d.driver {
@@ -1184,12 +1208,24 @@ func (d *SQLDatabase) GetClickThroughRate(date time.Time, positiveTypes []string
 	// Get read feedback
 	switch d.driver {
 	case MySQL, ClickHouse:
-		builder.WriteString("SELECT DISTINCT user_id, item_id FROM feedback WHERE DATE(time_stamp) = DATE(?) AND feedback_type = ?) AS read_feedback ")
+		builder.WriteString("SELECT DISTINCT user_id, item_id FROM feedback WHERE DATE(time_stamp) = DATE(?) AND feedback_type IN (")
 	case Postgres:
-		builder.WriteString(fmt.Sprintf("SELECT DISTINCT user_id, item_id FROM feedback WHERE DATE(time_stamp) = DATE($%d) AND feedback_type = $%d) AS read_feedback ", len(args)+1, len(args)+2))
+		builder.WriteString(fmt.Sprintf("SELECT DISTINCT user_id, item_id FROM feedback WHERE DATE(time_stamp) = DATE($%d) AND feedback_type IN (", len(args)+1))
 	}
-	args = append(args, date, readType)
-	builder.WriteString("ON positive_feedback.user_id = read_feedback.user_id AND positive_feedback.item_id = read_feedback.item_id GROUP BY read_feedback.user_id ")
+	args = append(args, date)
+	for i, readType := range readTypes {
+		if i > 0 {
+			builder.WriteString(",")
+		}
+		switch d.driver {
+		case MySQL, ClickHouse:
+			builder.WriteString("?")
+		case Postgres:
+			builder.WriteString(fmt.Sprintf("$%d", len(args)+1))
+		}
+		args = append(args, readType)
+	}
+	builder.WriteString(")) AS read_feedback ON positive_feedback.user_id = read_feedback.user_id AND positive_feedback.item_id = read_feedback.item_id GROUP BY read_feedback.user_id ")
 	// users must have at least one positive feedback
 	switch d.driver {
 	case MySQL:

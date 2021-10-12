@@ -16,22 +16,20 @@ package server
 
 import (
 	"fmt"
-	"github.com/juju/errors"
-	"net/http"
-	"strconv"
-	"time"
-
 	"github.com/araddon/dateparse"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/scylladb/go-set"
-
 	restfulspec "github.com/emicklei/go-restful-openapi/v2"
 	"github.com/emicklei/go-restful/v3"
+	"github.com/juju/errors"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/scylladb/go-set"
 	"github.com/zhenghaoz/gorse/base"
 	"github.com/zhenghaoz/gorse/config"
 	"github.com/zhenghaoz/gorse/storage/cache"
 	"github.com/zhenghaoz/gorse/storage/data"
 	"go.uber.org/zap"
+	"net/http"
+	"strconv"
+	"time"
 )
 
 // RestServer implements a REST-ful API server.
@@ -90,14 +88,14 @@ func (s *RestServer) CreateWebService() {
 	ws.Route(ws.POST("/user").To(s.insertUser).
 		Doc("Insert a user.").
 		Metadata(restfulspec.KeyOpenAPITags, []string{"user"}).
-		Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API")).
+		Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API").DataType("string")).
 		Returns(200, "OK", Success{}).
 		Reads(data.User{}))
 	// Get a user
 	ws.Route(ws.GET("/user/{user-id}").To(s.getUser).
 		Doc("Get a user.").
 		Metadata(restfulspec.KeyOpenAPITags, []string{"user"}).
-		Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API")).
+		Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API").DataType("string")).
 		Param(ws.PathParameter("user-id", "identifier of the user").DataType("string")).
 		Returns(200, "OK", data.User{}).
 		Writes(data.User{}))
@@ -105,15 +103,15 @@ func (s *RestServer) CreateWebService() {
 	ws.Route(ws.POST("/users").To(s.insertUsers).
 		Doc("Insert users.").
 		Metadata(restfulspec.KeyOpenAPITags, []string{"user"}).
-		Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API")).
+		Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API").DataType("string")).
 		Returns(200, "OK", Success{}).
 		Reads([]data.User{}))
 	// Get users
 	ws.Route(ws.GET("/users").To(s.getUsers).
 		Doc("Get users.").
 		Metadata(restfulspec.KeyOpenAPITags, []string{"user"}).
-		Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API")).
-		Param(ws.QueryParameter("n", "number of returned users").DataType("int")).
+		Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API").DataType("string")).
+		Param(ws.QueryParameter("n", "number of returned users").DataType("integer")).
 		Param(ws.QueryParameter("cursor", "cursor for next page").DataType("string")).
 		Returns(200, "OK", UserIterator{}).
 		Writes(UserIterator{}))
@@ -121,7 +119,7 @@ func (s *RestServer) CreateWebService() {
 	ws.Route(ws.DELETE("/user/{user-id}").To(s.deleteUser).
 		Doc("Delete a user.").
 		Metadata(restfulspec.KeyOpenAPITags, []string{"user"}).
-		Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API")).
+		Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API").DataType("string")).
 		Param(ws.PathParameter("user-id", "identifier of the user").DataType("string")).
 		Returns(200, "OK", Success{}).
 		Writes(Success{}))
@@ -130,15 +128,15 @@ func (s *RestServer) CreateWebService() {
 	ws.Route(ws.POST("/item").To(s.insertItem).
 		Doc("Insert an item.").
 		Metadata(restfulspec.KeyOpenAPITags, []string{"item"}).
-		Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API")).
+		Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API").DataType("string")).
 		Returns(200, "OK", Success{}).
 		Reads(data.Item{}))
 	// Get items
 	ws.Route(ws.GET("/items").To(s.getItems).
 		Doc("Get items.").
 		Metadata(restfulspec.KeyOpenAPITags, []string{"item"}).
-		Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API")).
-		Param(ws.QueryParameter("n", "number of returned items").DataType("int")).
+		Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API").DataType("string")).
+		Param(ws.QueryParameter("n", "number of returned items").DataType("integer")).
 		Param(ws.QueryParameter("cursor", "cursor for next page").DataType("string")).
 		Returns(200, "OK", ItemIterator{}).
 		Writes(ItemIterator{}))
@@ -146,37 +144,43 @@ func (s *RestServer) CreateWebService() {
 	ws.Route(ws.GET("/item/{item-id}").To(s.getItem).
 		Doc("Get a item.").
 		Metadata(restfulspec.KeyOpenAPITags, []string{"item"}).
-		Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API")).
-		Param(ws.PathParameter("item-id", "identifier of the item").DataType("int")).
+		Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API").DataType("string")).
+		Param(ws.PathParameter("item-id", "identifier of the item").DataType("string")).
 		Returns(200, "OK", data.Item{}).
 		Writes(data.Item{}))
 	// Insert items
 	ws.Route(ws.POST("/items").To(s.insertItems).
 		Doc("Insert items.").
 		Metadata(restfulspec.KeyOpenAPITags, []string{"item"}).
-		Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API")).
+		Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API").DataType("string")).
 		Reads([]data.Item{}))
 	// Delete item
 	ws.Route(ws.DELETE("/item/{item-id}").To(s.deleteItem).
 		Doc("Delete a item.").
 		Metadata(restfulspec.KeyOpenAPITags, []string{"item"}).
-		Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API")).
+		Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API").DataType("string")).
 		Param(ws.PathParameter("item-id", "identified of the item").DataType("string")).
 		Returns(200, "OK", Success{}).
 		Writes(Success{}))
 
 	// Insert feedback
-	ws.Route(ws.POST("/feedback").To(s.insertFeedback).
-		Doc("Insert multiple feedback.").
+	ws.Route(ws.POST("/feedback").To(s.insertFeedback(false)).
+		Doc("Insert multiple feedback. Ignore insertion if feedback exists.").
 		Metadata(restfulspec.KeyOpenAPITags, []string{"feedback"}).
-		Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API")).
+		Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API").DataType("string")).
+		Reads([]data.Feedback{}).
+		Returns(200, "OK", Success{}))
+	ws.Route(ws.PUT("/feedback").To(s.insertFeedback(true)).
+		Doc("Insert multiple feedback. Existed feedback would be overwritten.").
+		Metadata(restfulspec.KeyOpenAPITags, []string{"feedback"}).
+		Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API").DataType("string")).
 		Reads([]data.Feedback{}).
 		Returns(200, "OK", Success{}))
 	// Get feedback
 	ws.Route(ws.GET("/feedback").To(s.getFeedback).
 		Doc("Get multiple feedback.").
 		Metadata(restfulspec.KeyOpenAPITags, []string{"feedback"}).
-		Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API")).
+		Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API").DataType("string")).
 		Param(ws.QueryParameter("cursor", "cursor for next page").DataType("string")).
 		Param(ws.QueryParameter("n", "number of returned feedback").DataType("integer")).
 		Returns(200, "OK", FeedbackIterator{}).
@@ -184,7 +188,7 @@ func (s *RestServer) CreateWebService() {
 	ws.Route(ws.GET("/feedback/{user-id}/{item-id}").To(s.getUserItemFeedback).
 		Doc("Get feedback between a user and a item.").
 		Metadata(restfulspec.KeyOpenAPITags, []string{"feedback"}).
-		Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API")).
+		Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API").DataType("string")).
 		Param(ws.PathParameter("user-id", "identifier of the user").DataType("string")).
 		Param(ws.PathParameter("item-id", "identifier of the item").DataType("string")).
 		Returns(200, "OK", []data.Feedback{}).
@@ -192,7 +196,7 @@ func (s *RestServer) CreateWebService() {
 	ws.Route(ws.DELETE("/feedback/{user-id}/{item-id}").To(s.deleteUserItemFeedback).
 		Doc("Delete feedback between a user and a item.").
 		Metadata(restfulspec.KeyOpenAPITags, []string{"feedback"}).
-		Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API")).
+		Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API").DataType("string")).
 		Param(ws.PathParameter("user-id", "identifier of the user").DataType("string")).
 		Param(ws.PathParameter("item-id", "identifier of the item").DataType("string")).
 		Returns(200, "OK", []data.Feedback{}).
@@ -201,7 +205,7 @@ func (s *RestServer) CreateWebService() {
 		Doc("Get multiple feedback with feedback type.").
 		Metadata(restfulspec.KeyOpenAPITags, []string{"feedback"}).
 		Param(ws.PathParameter("feedback-type", "feedback type").DataType("string")).
-		Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API")).
+		Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API").DataType("string")).
 		Param(ws.QueryParameter("cursor", "cursor for next page").DataType("string")).
 		Param(ws.QueryParameter("n", "number of returned feedback").DataType("integer")).
 		Returns(200, "OK", FeedbackIterator{}).
@@ -210,7 +214,7 @@ func (s *RestServer) CreateWebService() {
 		Doc("Get feedback between a user and a item with feedback type.").
 		Metadata(restfulspec.KeyOpenAPITags, []string{"feedback"}).
 		Param(ws.PathParameter("feedback-type", "feedback type").DataType("string")).
-		Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API")).
+		Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API").DataType("string")).
 		Param(ws.PathParameter("user-id", "identifier of the user").DataType("string")).
 		Param(ws.PathParameter("item-id", "identifier of the item").DataType("string")).
 		Returns(200, "OK", data.Feedback{}).
@@ -219,7 +223,7 @@ func (s *RestServer) CreateWebService() {
 		Doc("Delete feedback between a user and a item with feedback type.").
 		Metadata(restfulspec.KeyOpenAPITags, []string{"feedback"}).
 		Param(ws.PathParameter("feedback-type", "feedback type").DataType("string")).
-		Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API")).
+		Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API").DataType("string")).
 		Param(ws.PathParameter("user-id", "identifier of the user").DataType("string")).
 		Param(ws.PathParameter("item-id", "identifier of the item").DataType("string")).
 		Returns(200, "OK", data.Feedback{}).
@@ -228,7 +232,7 @@ func (s *RestServer) CreateWebService() {
 	ws.Route(ws.GET("/user/{user-id}/feedback/{feedback-type}").To(s.getTypedFeedbackByUser).
 		Doc("Get feedback by user id with feedback type.").
 		Metadata(restfulspec.KeyOpenAPITags, []string{"feedback"}).
-		Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API")).
+		Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API").DataType("string")).
 		Param(ws.PathParameter("user-id", "identifier of the user").DataType("string")).
 		Param(ws.PathParameter("feedback-type", "feedback type").DataType("string")).
 		Returns(200, "OK", []data.Feedback{}).
@@ -236,7 +240,7 @@ func (s *RestServer) CreateWebService() {
 	ws.Route(ws.GET("/user/{user-id}/feedback/").To(s.getFeedbackByUser).
 		Doc("Get feedback by user id.").
 		Metadata(restfulspec.KeyOpenAPITags, []string{"feedback"}).
-		Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API")).
+		Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API").DataType("string")).
 		Param(ws.PathParameter("user-id", "identifier of the user").DataType("string")).
 		Returns(200, "OK", []data.Feedback{}).
 		Writes([]data.Feedback{}))
@@ -244,15 +248,15 @@ func (s *RestServer) CreateWebService() {
 	ws.Route(ws.GET("/item/{item-id}/feedback/{feedback-type}").To(s.getTypedFeedbackByItem).
 		Doc("Get feedback by item id with feedback type.").
 		Metadata(restfulspec.KeyOpenAPITags, []string{"feedback"}).
-		Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API")).
+		Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API").DataType("string")).
 		Param(ws.PathParameter("item-id", "identifier of the item").DataType("string")).
-		Param(ws.PathParameter("feedback-type", "feedback type").DataType("strung")).
+		Param(ws.PathParameter("feedback-type", "feedback type").DataType("string")).
 		Returns(200, "OK", []string{}).
 		Writes([]string{}))
 	ws.Route(ws.GET("/item/{item-id}/feedback/").To(s.getFeedbackByItem).
 		Doc("Get feedback by item id.").
 		Metadata(restfulspec.KeyOpenAPITags, []string{"feedback"}).
-		Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API")).
+		Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API").DataType("string")).
 		Param(ws.PathParameter("item-id", "identifier of the item").DataType("string")).
 		Returns(200, "OK", []string{}).
 		Writes([]string{}))
@@ -263,10 +267,10 @@ func (s *RestServer) CreateWebService() {
 	ws.Route(ws.GET("/intermediate/recommend/{user-id}").To(s.getCollaborative).
 		Doc("get the collaborative filtering recommendation for a user").
 		Metadata(restfulspec.KeyOpenAPITags, []string{"intermediate"}).
-		Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API")).
+		Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API").DataType("string")).
 		Param(ws.PathParameter("user-id", "identifier of the user").DataType("string")).
-		Param(ws.QueryParameter("n", "number of returned items").DataType("int")).
-		Param(ws.QueryParameter("offset", "offset of the list").DataType("int")).
+		Param(ws.QueryParameter("n", "number of returned items").DataType("integer")).
+		Param(ws.QueryParameter("offset", "offset of the list").DataType("integer")).
 		Returns(200, "OK", []string{}).
 		Writes([]string{}))
 
@@ -276,9 +280,9 @@ func (s *RestServer) CreateWebService() {
 	ws.Route(ws.GET("/popular").To(s.getPopular).
 		Doc("get popular items").
 		Metadata(restfulspec.KeyOpenAPITags, []string{"recommendation"}).
-		Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API")).
-		Param(ws.QueryParameter("n", "number of returned items").DataType("int")).
-		Param(ws.QueryParameter("offset", "offset of the list").DataType("int")).
+		Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API").DataType("string")).
+		Param(ws.QueryParameter("n", "number of returned items").DataType("integer")).
+		Param(ws.QueryParameter("offset", "offset of the list").DataType("integer")).
 		Returns(200, "OK", []string{}).
 		Writes([]string{}))
 	// Disable popular items under labels temporarily
@@ -286,16 +290,16 @@ func (s *RestServer) CreateWebService() {
 	//	Doc("get popular items").
 	//	Metadata(restfulspec.KeyOpenAPITags, []string{"recommendation"}).
 	//	Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API")).
-	//	Param(ws.QueryParameter("n", "number of returned items").DataType("int")).
-	//	Param(ws.QueryParameter("offset", "offset of the list").DataType("int")).
+	//	Param(ws.QueryParameter("n", "number of returned items").DataType("integer")).
+	//	Param(ws.QueryParameter("offset", "offset of the list").DataType("integer")).
 	//	Writes([]string{}))
 	// Get latest items
 	ws.Route(ws.GET("/latest").To(s.getLatest).
 		Doc("get latest items").
 		Metadata(restfulspec.KeyOpenAPITags, []string{"recommendation"}).
-		Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API")).
-		Param(ws.QueryParameter("n", "number of returned items").DataType("int")).
-		Param(ws.QueryParameter("offset", "offset of the list").DataType("int")).
+		Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API").DataType("string")).
+		Param(ws.QueryParameter("n", "number of returned items").DataType("integer")).
+		Param(ws.QueryParameter("offset", "offset of the list").DataType("integer")).
 		Returns(200, "OK", []cache.Scored{}).
 		Writes([]cache.Scored{}))
 	// Disable the latest items under labels temporarily
@@ -303,35 +307,37 @@ func (s *RestServer) CreateWebService() {
 	//	Doc("get latest items").
 	//	Metadata(restfulspec.KeyOpenAPITags, []string{"recommendation"}).
 	//	Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API")).
-	//	Param(ws.QueryParameter("n", "number of returned items").DataType("int")).
-	//	Param(ws.QueryParameter("offset", "offset of the list").DataType("int")).
+	//	Param(ws.QueryParameter("n", "number of returned items").DataType("integer")).
+	//	Param(ws.QueryParameter("offset", "offset of the list").DataType("integer")).
 	//	Writes([]string{}))
 	// Get neighbors
 	ws.Route(ws.GET("/item/{item-id}/neighbors/").To(s.getItemNeighbors).
 		Doc("get neighbors of a item").
 		Metadata(restfulspec.KeyOpenAPITags, []string{"recommendation"}).
-		Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API")).
+		Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API").DataType("string")).
 		Param(ws.QueryParameter("item-id", "identifier of the item").DataType("string")).
-		Param(ws.QueryParameter("n", "number of returned items").DataType("int")).
-		Param(ws.QueryParameter("offset", "offset of the list").DataType("int")).
+		Param(ws.QueryParameter("n", "number of returned items").DataType("integer")).
+		Param(ws.QueryParameter("offset", "offset of the list").DataType("integer")).
 		Returns(200, "OK", []string{}).
 		Writes([]string{}))
 	ws.Route(ws.GET("/user/{user-id}/neighbors/").To(s.getUserNeighbors).
 		Doc("get neighbors of a user").
 		Metadata(restfulspec.KeyOpenAPITags, []string{"recommendation"}).
-		Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API")).
+		Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API").DataType("string")).
 		Param(ws.QueryParameter("user-id", "identifier of the user").DataType("string")).
-		Param(ws.QueryParameter("n", "number of returned users").DataType("int")).
-		Param(ws.QueryParameter("offset", "offset of the list").DataType("int")).
+		Param(ws.QueryParameter("n", "number of returned users").DataType("integer")).
+		Param(ws.QueryParameter("offset", "offset of the list").DataType("integer")).
 		Returns(200, "OK", []string{}).
 		Writes([]string{}))
 	ws.Route(ws.GET("/recommend/{user-id}").To(s.getRecommend).
 		Doc("Get recommendation for user.").
 		Metadata(restfulspec.KeyOpenAPITags, []string{"recommendation"}).
-		Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API")).
+		Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API").DataType("string")).
 		Param(ws.PathParameter("user-id", "identifier of the user").DataType("string")).
-		Param(ws.QueryParameter("write-back", "write recommendation back to feedback").DataType("string")).
-		Param(ws.QueryParameter("n", "number of returned items").DataType("int")).
+		Param(ws.QueryParameter("write-back-type", "type of write back feedback").DataType("string")).
+		Param(ws.QueryParameter("write-back-delay", "timestamp delay of write back feedback in minutes").DataType("integer")).
+		Param(ws.QueryParameter("n", "number of returned items").DataType("integer")).
+		Param(ws.QueryParameter("offset", "offset in the recommendation result").DataType("integer")).
 		Returns(200, "OK", []string{}).
 		Writes([]string{}))
 
@@ -340,8 +346,8 @@ func (s *RestServer) CreateWebService() {
 	ws.Route(ws.GET("/measurements/{name}").To(s.getMeasurements).
 		Doc("Get measurements").
 		Metadata(restfulspec.KeyOpenAPITags, []string{"measurements"}).
-		Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API")).
-		Param(ws.QueryParameter("n", "number of returned items").DataType("int")).
+		Param(ws.HeaderParameter("X-API-Key", "secret key for RESTful API").DataType("string")).
+		Param(ws.QueryParameter("n", "number of returned items").DataType("integer")).
 		Returns(200, "OK", []data.Measurement{}).
 		Writes([]data.Measurement{}))
 }
@@ -557,12 +563,14 @@ func (s *RestServer) Recommend(userId string, n int, recommenders ...Recommender
 
 		// read ignore items
 		loadCachedReadStart := time.Now()
-		ignoreItems, err := s.CacheClient.GetList(cache.IgnoreItems, userId)
+		ignoreItems, err := s.CacheClient.GetScores(cache.IgnoreItems, userId, 0, -1)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		for _, item := range ignoreItems {
-			excludeSet.Add(item)
+			if item.Score <= float32(time.Now().Unix()) {
+				excludeSet.Add(item.Id)
+			}
 		}
 		loadFinalRecTime = time.Since(loadCachedReadStart)
 		// remove ignore items
@@ -608,7 +616,7 @@ func (s *RestServer) Recommend(userId string, n int, recommenders ...Recommender
 	var userFeedback []data.Feedback
 	if len(results) < n && recommenderMask-CTRRecommender > 0 {
 		start := time.Now()
-		userFeedback, err = s.DataClient.GetUserFeedback(userId)
+		userFeedback, err = s.DataClient.GetUserFeedback(userId, false)
 		if err != nil {
 			return nil, err
 		}
@@ -665,7 +673,7 @@ func (s *RestServer) Recommend(userId string, n int, recommenders ...Recommender
 		}
 		for _, user := range similarUsers {
 			// load historical feedback
-			feedbacks, err := s.DataClient.GetUserFeedback(user.Id, s.GorseConfig.Database.PositiveFeedbackType...)
+			feedbacks, err := s.DataClient.GetUserFeedback(user.Id, false, s.GorseConfig.Database.PositiveFeedbackType...)
 			if err != nil {
 				return nil, err
 			}
@@ -764,7 +772,17 @@ func (s *RestServer) getRecommend(request *restful.Request, response *restful.Re
 		BadRequest(response, err)
 		return
 	}
-	writeBackFeedback := request.QueryParameter("write-back")
+	offset, err := ParseInt(request, "offset", 0)
+	if err != nil {
+		BadRequest(response, err)
+		return
+	}
+	writeBackFeedback := request.QueryParameter("write-back-type")
+	writeBackDelay, err := ParseInt(request, "write-back-delay", 0)
+	if err != nil {
+		BadRequest(response, err)
+		return
+	}
 	// online recommendation
 	recommenders := []Recommender{CTRRecommender}
 	for _, recommender := range s.GorseConfig.Recommend.FallbackRecommend {
@@ -784,11 +802,12 @@ func (s *RestServer) getRecommend(request *restful.Request, response *restful.Re
 			return
 		}
 	}
-	results, err := s.Recommend(userId, n, recommenders...)
+	results, err := s.Recommend(userId, offset+n, recommenders...)
 	if err != nil {
 		InternalServerError(response, err)
 		return
 	}
+	results = results[offset:]
 	// write back
 	if writeBackFeedback != "" {
 		for _, itemId := range results {
@@ -799,9 +818,9 @@ func (s *RestServer) getRecommend(request *restful.Request, response *restful.Re
 					ItemId:       itemId,
 					FeedbackType: writeBackFeedback,
 				},
-				Timestamp: time.Now(),
+				Timestamp: time.Now().Add(time.Minute * time.Duration(writeBackDelay)),
 			}
-			err = s.DataClient.BatchInsertFeedback([]data.Feedback{feedback}, false, false)
+			err = s.DataClient.BatchInsertFeedback([]data.Feedback{feedback}, false, false, false)
 			if err != nil {
 				InternalServerError(response, err)
 				return
@@ -940,7 +959,7 @@ func (s *RestServer) getTypedFeedbackByUser(request *restful.Request, response *
 	}
 	feedbackType := request.PathParameter("feedback-type")
 	userId := request.PathParameter("user-id")
-	feedback, err := s.DataClient.GetUserFeedback(userId, feedbackType)
+	feedback, err := s.DataClient.GetUserFeedback(userId, false, feedbackType)
 	if err != nil {
 		InternalServerError(response, err)
 		return
@@ -955,7 +974,7 @@ func (s *RestServer) getFeedbackByUser(request *restful.Request, response *restf
 		return
 	}
 	userId := request.PathParameter("user-id")
-	feedback, err := s.DataClient.GetUserFeedback(userId)
+	feedback, err := s.DataClient.GetUserFeedback(userId, false)
 	if err != nil {
 		InternalServerError(response, err)
 		return
@@ -1098,62 +1117,64 @@ type Feedback struct {
 	Comment   string
 }
 
-func (s *RestServer) insertFeedback(request *restful.Request, response *restful.Response) {
-	// authorize
-	if !s.auth(request, response) {
-		return
-	}
-	// add ratings
-	feedbackLiterTime := new([]Feedback)
-	if err := request.ReadEntity(feedbackLiterTime); err != nil {
-		BadRequest(response, err)
-		return
-	}
-	// parse datetime
-	var err error
-	feedback := make([]data.Feedback, len(*feedbackLiterTime))
-	users := set.NewStringSet()
-	items := set.NewStringSet()
-	for i := range feedback {
-		users.Add((*feedbackLiterTime)[i].UserId)
-		items.Add((*feedbackLiterTime)[i].ItemId)
-		feedback[i].FeedbackKey = (*feedbackLiterTime)[i].FeedbackKey
-		feedback[i].Comment = (*feedbackLiterTime)[i].Comment
-		feedback[i].Timestamp, err = dateparse.ParseAny((*feedbackLiterTime)[i].Timestamp)
-		if err != nil {
+func (s *RestServer) insertFeedback(overwrite bool) func(request *restful.Request, response *restful.Response) {
+	return func(request *restful.Request, response *restful.Response) {
+		// authorize
+		if !s.auth(request, response) {
+			return
+		}
+		// add ratings
+		feedbackLiterTime := new([]Feedback)
+		if err := request.ReadEntity(feedbackLiterTime); err != nil {
 			BadRequest(response, err)
 			return
 		}
-	}
-	// insert feedback to data store
-	err = s.DataClient.BatchInsertFeedback(feedback,
-		s.GorseConfig.Database.AutoInsertUser,
-		s.GorseConfig.Database.AutoInsertItem)
-	if err != nil {
-		InternalServerError(response, err)
-		return
-	}
-	// insert feedback to cache store
-	if err = s.InsertFeedbackToCache(feedback); err != nil {
-		InternalServerError(response, err)
-		return
-	}
+		// parse datetime
+		var err error
+		feedback := make([]data.Feedback, len(*feedbackLiterTime))
+		users := set.NewStringSet()
+		items := set.NewStringSet()
+		for i := range feedback {
+			users.Add((*feedbackLiterTime)[i].UserId)
+			items.Add((*feedbackLiterTime)[i].ItemId)
+			feedback[i].FeedbackKey = (*feedbackLiterTime)[i].FeedbackKey
+			feedback[i].Comment = (*feedbackLiterTime)[i].Comment
+			feedback[i].Timestamp, err = dateparse.ParseAny((*feedbackLiterTime)[i].Timestamp)
+			if err != nil {
+				BadRequest(response, err)
+				return
+			}
+		}
+		// insert feedback to data store
+		err = s.DataClient.BatchInsertFeedback(feedback,
+			s.GorseConfig.Database.AutoInsertUser,
+			s.GorseConfig.Database.AutoInsertItem, overwrite)
+		if err != nil {
+			InternalServerError(response, err)
+			return
+		}
+		// insert feedback to cache store
+		if err = s.InsertFeedbackToCache(feedback); err != nil {
+			InternalServerError(response, err)
+			return
+		}
 
-	for _, userId := range users.List() {
-		err = s.CacheClient.SetTime(cache.LastModifyUserTime, userId, time.Now())
-		if err != nil {
-			InternalServerError(response, err)
-			return
+		for _, userId := range users.List() {
+			err = s.CacheClient.SetTime(cache.LastModifyUserTime, userId, time.Now())
+			if err != nil {
+				InternalServerError(response, err)
+				return
+			}
 		}
-	}
-	for _, itemId := range items.List() {
-		err = s.CacheClient.SetTime(cache.LastModifyItemTime, itemId, time.Now())
-		if err != nil {
-			InternalServerError(response, err)
-			return
+		for _, itemId := range items.List() {
+			err = s.CacheClient.SetTime(cache.LastModifyItemTime, itemId, time.Now())
+			if err != nil {
+				InternalServerError(response, err)
+				return
+			}
 		}
+		Ok(response, Success{RowAffected: len(feedback)})
 	}
-	Ok(response, Success{RowAffected: len(feedback)})
 }
 
 // FeedbackIterator is the iterator for feedback.
@@ -1349,7 +1370,7 @@ func (s *RestServer) auth(request *restful.Request, response *restful.Response) 
 // InsertFeedbackToCache inserts feedback to cache.
 func (s *RestServer) InsertFeedbackToCache(feedback []data.Feedback) error {
 	for _, v := range feedback {
-		err := s.CacheClient.AppendList(cache.IgnoreItems, v.UserId, v.ItemId)
+		err := s.CacheClient.AppendScores(cache.IgnoreItems, v.UserId, cache.Scored{v.ItemId, float32(v.Timestamp.Unix())})
 		if err != nil {
 			return errors.Trace(err)
 		}

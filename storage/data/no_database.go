@@ -109,7 +109,7 @@ func (NoDatabase) GetUserStream(_ int) (chan []User, chan error) {
 }
 
 // GetUserFeedback method of NoDatabase returns ErrNoDatabase.
-func (NoDatabase) GetUserFeedback(_ string, _ ...string) ([]Feedback, error) {
+func (NoDatabase) GetUserFeedback(_ string, _ bool, _ ...string) ([]Feedback, error) {
 	return nil, ErrNoDatabase
 }
 
@@ -124,7 +124,7 @@ func (NoDatabase) DeleteUserItemFeedback(_, _ string, _ ...string) (int, error) 
 }
 
 // BatchInsertFeedback method of NoDatabase returns ErrNoDatabase.
-func (NoDatabase) BatchInsertFeedback(_ []Feedback, _, _ bool) error {
+func (NoDatabase) BatchInsertFeedback(_ []Feedback, _, _, _ bool) error {
 	return ErrNoDatabase
 }
 
@@ -156,6 +156,6 @@ func (NoDatabase) GetMeasurements(_ string, _ int) ([]Measurement, error) {
 }
 
 // GetClickThroughRate method of NoDatabase returns ErrNoDatabase.
-func (NoDatabase) GetClickThroughRate(_ time.Time, _ []string, _ string) (float64, error) {
+func (NoDatabase) GetClickThroughRate(_ time.Time, _, _ []string) (float64, error) {
 	return 0, ErrNoDatabase
 }

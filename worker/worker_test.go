@@ -14,10 +14,8 @@
 package worker
 
 import (
-	"bufio"
 	"bytes"
 	"context"
-	"encoding/gob"
 	"encoding/json"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/stretchr/testify/assert"
@@ -72,7 +70,7 @@ func TestCheckRecommendCacheTimeout(t *testing.T) {
 	assert.True(t, w.checkRecommendCacheTimeout("0"))
 	err = w.cacheClient.SetTime(cache.LastUpdateUserRecommendTime, "0", time.Now().Add(time.Hour*100))
 	assert.False(t, w.checkRecommendCacheTimeout("0"))
-	err = w.cacheClient.ClearList(cache.CTRRecommend, "0")
+	err = w.cacheClient.ClearScores(cache.CTRRecommend, "0")
 	assert.True(t, w.checkRecommendCacheTimeout("0"))
 }
 
@@ -160,12 +158,16 @@ func TestRecommendMatrixFactorization(t *testing.T) {
 	now := time.Now()
 	err := w.dataClient.BatchInsertFeedback([]data.Feedback{
 		{FeedbackKey: data.FeedbackKey{FeedbackType: "click", UserId: "0", ItemId: "9"}, Timestamp: now.Add(-time.Hour)},
-		{FeedbackKey: data.FeedbackKey{FeedbackType: "click", UserId: "0", ItemId: "8"}, Timestamp: now.Add(time.Hour)},
+		{FeedbackKey: data.FeedbackKey{FeedbackType: "click", UserId: "0", ItemId: "8"}, Timestamp: now.Add(-time.Hour)},
 		{FeedbackKey: data.FeedbackKey{FeedbackType: "click", UserId: "0", ItemId: "7"}, Timestamp: now.Add(-time.Hour)},
-		{FeedbackKey: data.FeedbackKey{FeedbackType: "click", UserId: "0", ItemId: "6"}, Timestamp: now.Add(time.Hour)},
+		{FeedbackKey: data.FeedbackKey{FeedbackType: "click", UserId: "0", ItemId: "6"}, Timestamp: now.Add(-time.Hour)},
 		{FeedbackKey: data.FeedbackKey{FeedbackType: "click", UserId: "0", ItemId: "5"}, Timestamp: now.Add(-time.Hour)},
-		{FeedbackKey: data.FeedbackKey{FeedbackType: "click", UserId: "0", ItemId: "4"}, Timestamp: now.Add(time.Hour)},
-	}, true, true)
+		{FeedbackKey: data.FeedbackKey{FeedbackType: "click", UserId: "0", ItemId: "4"}, Timestamp: now.Add(-time.Hour)},
+		{FeedbackKey: data.FeedbackKey{FeedbackType: "click", UserId: "0", ItemId: "3"}, Timestamp: now.Add(time.Hour)},
+		{FeedbackKey: data.FeedbackKey{FeedbackType: "click", UserId: "0", ItemId: "2"}, Timestamp: now.Add(time.Hour)},
+		{FeedbackKey: data.FeedbackKey{FeedbackType: "click", UserId: "0", ItemId: "1"}, Timestamp: now.Add(time.Hour)},
+		{FeedbackKey: data.FeedbackKey{FeedbackType: "click", UserId: "0", ItemId: "0"}, Timestamp: now.Add(time.Hour)},
+	}, true, true, true)
 	assert.NoError(t, err)
 	// create mock model
 	m := newMockMatrixFactorizationForRecommend(1, 10)
@@ -180,9 +182,13 @@ func TestRecommendMatrixFactorization(t *testing.T) {
 		{"0", 0},
 	}, recommends)
 
-	read, err := w.cacheClient.GetList(cache.IgnoreItems, "0")
+	readCache, err := w.cacheClient.GetScores(cache.IgnoreItems, "0", 0, -1)
+	read := cache.RemoveScores(readCache)
 	assert.NoError(t, err)
-	assert.Equal(t, []string{"4", "6", "8"}, read)
+	assert.Equal(t, []string{"0", "1", "2", "3"}, read)
+	for _, v := range readCache {
+		assert.Greater(t, v.Score, float32(time.Now().Unix()))
+	}
 }
 
 func TestRecommend_ItemBased(t *testing.T) {
@@ -197,7 +203,7 @@ func TestRecommend_ItemBased(t *testing.T) {
 		{FeedbackKey: data.FeedbackKey{FeedbackType: "a", UserId: "0", ItemId: "22"}},
 		{FeedbackKey: data.FeedbackKey{FeedbackType: "a", UserId: "0", ItemId: "23"}},
 		{FeedbackKey: data.FeedbackKey{FeedbackType: "a", UserId: "0", ItemId: "24"}},
-	}, true, true)
+	}, true, true, true)
 	assert.NoError(t, err)
 	// insert similar items
 	err = w.cacheClient.SetScores(cache.ItemNeighbors, "21", []cache.Scored{
@@ -249,17 +255,17 @@ func TestRecommend_UserBased(t *testing.T) {
 	// insert feedback
 	err = w.dataClient.BatchInsertFeedback([]data.Feedback{
 		{FeedbackKey: data.FeedbackKey{FeedbackType: "a", UserId: "1", ItemId: "11"}},
-	}, true, true)
+	}, true, true, true)
 	assert.NoError(t, err)
 	err = w.dataClient.BatchInsertFeedback([]data.Feedback{
 		{FeedbackKey: data.FeedbackKey{FeedbackType: "a", UserId: "2", ItemId: "12"}},
 		{FeedbackKey: data.FeedbackKey{FeedbackType: "a", UserId: "2", ItemId: "48"}},
-	}, true, true)
+	}, true, true, true)
 	assert.NoError(t, err)
 	err = w.dataClient.BatchInsertFeedback([]data.Feedback{
 		{FeedbackKey: data.FeedbackKey{FeedbackType: "a", UserId: "3", ItemId: "13"}},
 		{FeedbackKey: data.FeedbackKey{FeedbackType: "a", UserId: "3", ItemId: "48"}},
-	}, true, true)
+	}, true, true, true)
 	assert.NoError(t, err)
 	m := newMockMatrixFactorizationForRecommend(1, 10)
 	w.Recommend(m, []string{"0"})
@@ -328,9 +334,9 @@ type mockMaster struct {
 	cacheStore   *miniredis.Miniredis
 	dataStore    *miniredis.Miniredis
 	meta         *protocol.Meta
-	rankingModel *protocol.Model
-	clickModel   *protocol.Model
-	userIndex    *protocol.UserIndex
+	rankingModel []byte
+	clickModel   []byte
+	userIndex    []byte
 }
 
 func newMockMaster(t *testing.T) *mockMaster {
@@ -346,32 +352,22 @@ func newMockMaster(t *testing.T) *mockMaster {
 	train, test := newClickDataset()
 	fm := click.NewFM(click.FMClassification, model.Params{model.NEpochs: 0})
 	fm.Fit(train, test, nil)
-	clickModelPB := &protocol.Model{}
-	clickModelPB.Model, err = click.EncodeModel(fm)
+	clickModelBuffer := bytes.NewBuffer(nil)
+	err = click.MarshalModel(clickModelBuffer, fm)
 	assert.NoError(t, err)
-	clickModelPB.Version = 1
 
 	// create ranking model
 	trainSet, testSet := newRankingDataset()
 	bpr := ranking.NewBPR(model.Params{model.NEpochs: 0})
 	bpr.Fit(trainSet, testSet, nil)
-	rankingModelPB := &protocol.Model{}
-	rankingModelPB.Model, err = ranking.EncodeModel(bpr)
+	rankingModelBuffer := bytes.NewBuffer(nil)
+	err = ranking.MarshalModel(rankingModelBuffer, bpr)
 	assert.NoError(t, err)
-	rankingModelPB.Name = "bpr"
-	rankingModelPB.Version = 2
 
 	// create user index
-	buf := bytes.NewBuffer(nil)
-	writer := bufio.NewWriter(buf)
-	encoder := gob.NewEncoder(writer)
-	err = encoder.Encode(base.NewMapIndex())
+	userIndexBuffer := bytes.NewBuffer(nil)
+	err = base.MarshalIndex(userIndexBuffer, base.NewMapIndex())
 	assert.NoError(t, err)
-	err = writer.Flush()
-	assert.NoError(t, err)
-	userIndexPB := &protocol.UserIndex{}
-	userIndexPB.Version = 3
-	userIndexPB.UserIndex = buf.Bytes()
 
 	return &mockMaster{
 		addr: make(chan string),
@@ -383,9 +379,9 @@ func newMockMaster(t *testing.T) *mockMaster {
 		},
 		cacheStore:   cacheStore,
 		dataStore:    dataStore,
-		userIndex:    userIndexPB,
-		clickModel:   clickModelPB,
-		rankingModel: rankingModelPB,
+		userIndex:    userIndexBuffer.Bytes(),
+		clickModel:   clickModelBuffer.Bytes(),
+		rankingModel: rankingModelBuffer.Bytes(),
 	}
 }
 
@@ -393,16 +389,16 @@ func (m *mockMaster) GetMeta(_ context.Context, _ *protocol.NodeInfo) (*protocol
 	return m.meta, nil
 }
 
-func (m *mockMaster) GetRankingModel(context.Context, *protocol.NodeInfo) (*protocol.Model, error) {
-	return m.rankingModel, nil
+func (m *mockMaster) GetRankingModel(_ *protocol.VersionInfo, sender protocol.Master_GetRankingModelServer) error {
+	return sender.Send(&protocol.Fragment{Data: m.rankingModel})
 }
 
-func (m *mockMaster) GetClickModel(context.Context, *protocol.NodeInfo) (*protocol.Model, error) {
-	return m.clickModel, nil
+func (m *mockMaster) GetClickModel(_ *protocol.VersionInfo, sender protocol.Master_GetClickModelServer) error {
+	return sender.Send(&protocol.Fragment{Data: m.clickModel})
 }
 
-func (m *mockMaster) GetUserIndex(context.Context, *protocol.NodeInfo) (*protocol.UserIndex, error) {
-	return m.userIndex, nil
+func (m *mockMaster) GetUserIndex(_ *protocol.VersionInfo, sender protocol.Master_GetUserIndexServer) error {
+	return sender.Send(&protocol.Fragment{Data: m.userIndex})
 }
 
 func (m *mockMaster) Start(t *testing.T) {

@@ -15,11 +15,16 @@
 package worker
 
 import (
-	"bytes"
 	"context"
-	"encoding/gob"
 	"encoding/json"
 	"fmt"
+	"math"
+	"math/rand"
+	"net/http"
+	"os"
+	"path/filepath"
+	"time"
+
 	"github.com/juju/errors"
 	cmap "github.com/orcaman/concurrent-map"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -33,12 +38,6 @@ import (
 	"github.com/zhenghaoz/gorse/storage/data"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
-	"math"
-	"math/rand"
-	"net/http"
-	"os"
-	"path/filepath"
-	"time"
 )
 
 // Worker manages states of a worker node.
@@ -65,7 +64,7 @@ type Worker struct {
 	// user index
 	latestUserIndexVersion  int64
 	currentUserIndexVersion int64
-	userIndex               *base.MapIndex
+	userIndex               base.Index
 
 	// ranking model
 	latestRankingModelVersion  int64
@@ -197,20 +196,19 @@ func (w *Worker) Pull() {
 		// pull user index
 		if w.latestUserIndexVersion != w.currentUserIndexVersion {
 			base.Logger().Info("start pull user index")
-			if userIndexResponse, err := w.masterClient.GetUserIndex(context.Background(),
-				&protocol.NodeInfo{NodeType: protocol.NodeType_WorkerNode, NodeName: w.workerName},
+			if userIndexReceiver, err := w.masterClient.GetUserIndex(context.Background(),
+				&protocol.VersionInfo{Version: w.latestUserIndexVersion},
 				grpc.MaxCallRecvMsgSize(math.MaxInt)); err != nil {
 				base.Logger().Error("failed to pull user index", zap.Error(err))
 			} else {
 				// encode user index
-				var userIndex base.MapIndex
-				reader := bytes.NewReader(userIndexResponse.UserIndex)
-				decoder := gob.NewDecoder(reader)
-				if err = decoder.Decode(&userIndex); err != nil {
-					base.Logger().Error("failed to decode user index", zap.Error(err))
+				var userIndex base.Index
+				userIndex, err = protocol.UnmarshalIndex(userIndexReceiver)
+				if err != nil {
+					base.Logger().Error("fail to unmarshal user index", zap.Error(err))
 				} else {
-					w.userIndex = &userIndex
-					w.currentUserIndexVersion = userIndexResponse.Version
+					w.userIndex = userIndex
+					w.currentUserIndexVersion = w.latestUserIndexVersion
 					base.Logger().Info("synced user index",
 						zap.String("version", base.Hex(w.currentUserIndexVersion)))
 					pulled = true
@@ -221,18 +219,18 @@ func (w *Worker) Pull() {
 		// pull ranking model
 		if w.latestRankingModelVersion != w.currentRankingModelVersion {
 			base.Logger().Info("start pull ranking model")
-			if rankingResponse, err := w.masterClient.GetRankingModel(context.Background(),
-				&protocol.NodeInfo{
-					NodeType: protocol.NodeType_WorkerNode,
-					NodeName: w.workerName,
-				}, grpc.MaxCallRecvMsgSize(math.MaxInt)); err != nil {
+			if rankingModelReceiver, err := w.masterClient.GetRankingModel(context.Background(),
+				&protocol.VersionInfo{Version: w.latestRankingModelVersion},
+				grpc.MaxCallRecvMsgSize(math.MaxInt)); err != nil {
 				base.Logger().Error("failed to pull ranking model", zap.Error(err))
 			} else {
-				w.rankingModel, err = ranking.DecodeModel(rankingResponse.Model)
+				var rankingModel ranking.MatrixFactorization
+				rankingModel, err = protocol.UnmarshalRankingModel(rankingModelReceiver)
 				if err != nil {
-					base.Logger().Error("failed to decode ranking model", zap.Error(err))
+					base.Logger().Error("failed to unmarshal ranking model", zap.Error(err))
 				} else {
-					w.currentRankingModelVersion = rankingResponse.Version
+					w.rankingModel = rankingModel
+					w.currentRankingModelVersion = w.latestRankingModelVersion
 					base.Logger().Info("synced ranking model",
 						zap.String("version", base.Hex(w.currentRankingModelVersion)))
 					pulled = true
@@ -243,18 +241,18 @@ func (w *Worker) Pull() {
 		// pull click model
 		if w.latestClickModelVersion != w.currentClickModelVersion {
 			base.Logger().Info("start pull click model")
-			if clickResponse, err := w.masterClient.GetClickModel(context.Background(),
-				&protocol.NodeInfo{
-					NodeType: protocol.NodeType_WorkerNode,
-					NodeName: w.workerName,
-				}, grpc.MaxCallRecvMsgSize(math.MaxInt)); err != nil {
+			if clickModelReceiver, err := w.masterClient.GetClickModel(context.Background(),
+				&protocol.VersionInfo{Version: w.latestClickModelVersion},
+				grpc.MaxCallRecvMsgSize(math.MaxInt)); err != nil {
 				base.Logger().Error("failed to pull click model", zap.Error(err))
 			} else {
-				w.clickModel, err = click.DecodeModel(clickResponse.Model)
+				var clickModel click.FactorizationMachine
+				clickModel, err = protocol.UnmarshalClickModel(clickModelReceiver)
 				if err != nil {
-					base.Logger().Error("failed to decode click model", zap.Error(err))
+					base.Logger().Error("failed to unmarshal click model", zap.Error(err))
 				} else {
-					w.currentClickModelVersion = clickResponse.Version
+					w.clickModel = clickModel
+					w.currentClickModelVersion = w.latestClickModelVersion
 					base.Logger().Info("synced click model",
 						zap.String("version", base.Hex(w.currentClickModelVersion)))
 					pulled = true
@@ -354,11 +352,8 @@ func (w *Worker) Serve() {
 // 7. Rank items in results by click-through-rate.
 // 8. Refresh cache.
 func (w *Worker) Recommend(m ranking.MatrixFactorization, users []string) {
-	var userIndexer base.Index
 	// load user index
-	if _, ok := m.(ranking.MatrixFactorization); ok {
-		userIndexer = m.(ranking.MatrixFactorization).GetUserIndex()
-	}
+	userIndexer := m.GetUserIndex()
 	// load item index
 	itemIds := m.GetItemIndex().GetNames()
 	base.Logger().Info("ranking recommendation",
@@ -406,10 +401,7 @@ func (w *Worker) Recommend(m ranking.MatrixFactorization, users []string) {
 	_ = base.Parallel(len(users), w.jobs, func(workerId, jobId int) error {
 		userId := users[jobId]
 		// convert to user index
-		var userIndex int32
-		if _, ok := m.(ranking.MatrixFactorization); ok {
-			userIndex = userIndexer.ToNumber(userId)
-		}
+		userIndex := userIndexer.ToNumber(userId)
 		// skip inactive users before max recommend period
 		if !w.checkRecommendCacheTimeout(userId) {
 			return nil
@@ -491,7 +483,7 @@ func (w *Worker) Recommend(m ranking.MatrixFactorization, users []string) {
 			}
 			for _, user := range similarUsers {
 				// load historical feedback
-				feedbacks, err := w.dataClient.GetUserFeedback(user.Id, w.cfg.Database.PositiveFeedbackType...)
+				feedbacks, err := w.dataClient.GetUserFeedback(user.Id, false, w.cfg.Database.PositiveFeedbackType...)
 				if err != nil {
 					return err
 				}
@@ -647,7 +639,7 @@ func (w *Worker) checkRecommendCacheTimeout(userId string) bool {
 
 func loadUserHistoricalItems(database data.Database, userId string, feedbackTypes ...string) ([]string, error) {
 	items := make([]string, 0)
-	feedbacks, err := database.GetUserFeedback(userId, feedbackTypes...)
+	feedbacks, err := database.GetUserFeedback(userId, false, feedbackTypes...)
 	if err != nil {
 		return nil, err
 	}
@@ -667,22 +659,22 @@ func (w *Worker) refreshCache(userId string) error {
 		return errors.Trace(err)
 	}
 	// clear cache
-	err = w.cacheClient.ClearList(cache.IgnoreItems, userId)
+	err = w.cacheClient.ClearScores(cache.IgnoreItems, userId)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	// load cache
-	feedback, err := w.dataClient.GetUserFeedback(userId)
+	feedback, err := w.dataClient.GetUserFeedback(userId, true)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	var items []string
+	var items []cache.Scored
 	for _, v := range feedback {
 		if v.Timestamp.Unix() > timeLimit.Unix() {
-			items = append(items, v.ItemId)
+			items = append(items, cache.Scored{Id: v.ItemId, Score: float32(v.Timestamp.Unix())})
 		}
 	}
-	err = w.cacheClient.AppendList(cache.IgnoreItems, userId, items...)
+	err = w.cacheClient.AppendScores(cache.IgnoreItems, userId, items...)
 	if err != nil {
 		return errors.Trace(err)
 	}
